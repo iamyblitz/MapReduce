@@ -1,4 +1,4 @@
-# MIT 6.5840 MapReduce Lab (Lab 1)
+# MIT 6.5840 MapReduce Lab 
 
 Учебный проект по распределённым системам: реализация MapReduce из курса **MIT 6.5840 (Distributed Systems)**.
 
