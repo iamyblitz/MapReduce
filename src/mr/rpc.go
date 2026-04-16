@@ -10,7 +10,6 @@ package mr
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
-
 type ExampleArgs struct {
 	X int
 }
@@ -19,5 +18,21 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+type GetTaskArgs struct {
+}
 
+type GetTaskReply struct {
+	TaskType int
+	TaskId   int
+	FileName string
+	NReduce  int
+	NMap     int
+}
+
+type ReportTaskArgs struct {
+	TaskId   int
+	TaskType int
+}
+
+type ReportTaskReply struct {
+}

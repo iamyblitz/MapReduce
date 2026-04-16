@@ -1,11 +1,15 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-import "os"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+	"os"
+	"sort"
+	"time"
+)
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -21,20 +25,146 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-var coordSockName string // socket for coordinator
+// for sorting by key
+type ByKey []KeyValue
 
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
+var coordSockName string // socket for coordinator
 
 // main/mrworker.go calls this function.
 func Worker(sockname string, mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	coordSockName = sockname
+	for {
+		args := GetTaskArgs{}
+		reply := GetTaskReply{}
 
-	// Your worker implementation here.
+		ok := call("Coordinator.GetTask", &args, &reply)
+		if !ok {
+			fmt.Println("Coordinator doesn't respond, exiting...")
+			return
+		}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+		switch reply.TaskType {
+		case 0:
+			fmt.Printf("It's MAP task, babe -  №%d для файла %s\n", reply.TaskId,
+				reply.FileName)
+			content, err := os.ReadFile(reply.FileName)
+			if err != nil {
+				log.Fatalf("cannot read %v", reply.FileName)
+			}
+			kva := mapf(reply.FileName, string(content))
 
+			files := make([]*os.File, reply.NReduce)
+			encoders := make([]*json.Encoder, reply.NReduce)
+			tempFilenames := make([]string, reply.NReduce)
+
+			for i := 0; i < reply.NReduce; i++ {
+				tempFile, err := os.CreateTemp("", "mr-tmp-*")
+				if err != nil {
+					log.Fatalf("cannot create temp file: %v", err)
+				}
+				files[i] = tempFile
+				tempFilenames[i] = tempFile.Name()
+				encoders[i] = json.NewEncoder(tempFile)
+			}
+
+			for _, kv := range kva {
+				bucket := ihash(kv.Key) % reply.NReduce
+				err := encoders[bucket].Encode(&kv)
+				if err != nil {
+					log.Fatalf("cannot encode %v", kv)
+				}
+			}
+
+			// Close and rename temp files to final names
+			for i := 0; i < reply.NReduce; i++ {
+				files[i].Close()
+				finalName := fmt.Sprintf("mr-%d-%d", reply.TaskId, i)
+				os.Rename(tempFilenames[i], finalName)
+			}
+
+			reportArgs := ReportTaskArgs{
+				TaskId:   reply.TaskId,
+				TaskType: 0, // Map
+			}
+			reportReply := ReportTaskReply{}
+			call("Coordinator.ReportTask", &reportArgs, &reportReply)
+
+		case 1:
+			fmt.Printf("It's REDUCE task №%d\n", reply.TaskId)
+			// Collect all intermediate files for this reduce task
+			var kva []KeyValue
+			for i := 0; i < reply.NMap; i++ {
+				filename := fmt.Sprintf("mr-%d-%d", i, reply.TaskId)
+				file, err := os.Open(filename)
+				if err != nil {
+					continue // file might not exist
+				}
+				decoder := json.NewDecoder(file)
+				for {
+					var kv KeyValue
+					if err := decoder.Decode(&kv); err != nil {
+						break
+					}
+					kva = append(kva, kv)
+				}
+				file.Close()
+			}
+
+			// Sort by key
+			sort.Sort(ByKey(kva))
+
+			// Write output to temp file
+			tempFile, err := os.CreateTemp("", "mr-tmp-*")
+			if err != nil {
+				log.Fatalf("cannot create temp file: %v", err)
+			}
+			tempFilename := tempFile.Name()
+
+			i := 0
+			for i < len(kva) {
+				j := i + 1
+				for j < len(kva) && kva[j].Key == kva[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, kva[k].Value)
+				}
+				output := reducef(kva[i].Key, values)
+				fmt.Fprintf(tempFile, "%v %v\n", kva[i].Key, output)
+				i = j
+			}
+			tempFile.Close()
+
+			// Rename temp file to final name
+			finalName := fmt.Sprintf("mr-out-%d", reply.TaskId)
+			os.Rename(tempFilename, finalName)
+
+			reportArgs := ReportTaskArgs{
+				TaskId:   reply.TaskId,
+				TaskType: 1, // Reduce
+			}
+			reportReply := ReportTaskReply{}
+			call("Coordinator.ReportTask", &reportArgs, &reportReply)
+
+		case 2:
+			time.Sleep(time.Second)
+
+		case 3:
+			// Exit signal from coordinator
+			fmt.Println("All tasks done, exiting...")
+			return
+
+		default:
+			fmt.Printf("Unknown type of task: %d\n", reply.TaskType)
+		}
+	} // Your worker implementation here.
 }
 
 // example function to show how to make an RPC call to the coordinator.

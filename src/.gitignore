@@ -1,5 +1,9 @@
 *.*/
 main/mr-tmp/
+main/mr-[0-9]*-[0-9]*
+main/mr-out-*
+main/sock*
+/mr/mr-tmp-*/
 mrtmp.*
 824-mrinput-*.txt
 /main/diff.out
