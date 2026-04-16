@@ -22,6 +22,17 @@
 make mr
 ```
 
+## Testing
+
+Локально:
+
+```bash
+cd src
+make mr
+```
+
+В GitHub Actions автоматически запускается тот же набор тестов (`make mr`) на каждый `push` и `pull_request` в ветку `master`.
+
 ## Attribution
 
 This repository is based on the MIT 6.5840 lab framework and adapted as a personal educational project.
